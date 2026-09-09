@@ -271,12 +271,65 @@ def counterparty_gap_card(gap: dict) -> str:
     <p style="margin:8px 0"><b>Why this counterparty needs it:</b> {html.escape(gap['reason'])}</p>
     <div style="background:#eef5f7;border-radius:6px;padding:10px 12px"><b>Drafting direction for this role:</b> {html.escape(gap['direction'])}</div></section>'''
 
+PERSPECTIVE_FOCUS = {
+    "Client / Customer": {
+        "Limitation of Liability": "Check whether the cap, exclusions, and carve-outs leave the Client without a meaningful remedy for the stated failure.",
+        "Indemnification": "Check whether the Client receives a clear defence and reimbursement right for the risks described in the clause.",
+        "Data Protection": "Check whether the Client has enforceable controls over its data, incident notification, and downstream processing.",
+        "Information Security": "Check whether the Client receives measurable safeguards, timely incident notice, and remediation cooperation.",
+        "SLA / Service Levels": "Check whether performance commitments, reporting, and remedies are measurable and enforceable.",
+        "Intellectual Property": "Check whether the Client obtains the ownership or licence rights it needs to use the deliverables.",
+        "Fees and Payment": "Check whether pricing, approvals, invoice disputes, and payment triggers are sufficiently controlled.",
+        "Term and Termination": "Check whether exit rights, transition support, and post-termination data/deliverable rights protect continuity.",
+    },
+    "Service Provider / Company": {
+        "Limitation of Liability": "Check whether the clause contains a defined aggregate cap, loss exclusions, claim period, and carefully scoped carve-outs.",
+        "Indemnification": "Check whether covered claims, defence control, settlement approval, and any cap treatment are bounded.",
+        "Data Protection": "Check whether processing obligations are tied to documented instructions and realistic operational commitments.",
+        "Information Security": "Check whether security requirements, audit scope, and incident duties are specific and achievable.",
+        "SLA / Service Levels": "Check whether metrics, exclusions, service credits, and dependency assumptions prevent open-ended performance exposure.",
+        "Intellectual Property": "Check whether background tools, know-how, and third-party materials are reserved and the customer grant is clear.",
+        "Fees and Payment": "Check whether price, billing prerequisites, payment timing, disputed sums, and change control protect collection.",
+        "Term and Termination": "Check whether cure periods, suspension/termination rights, exit scope, and payment consequences are balanced.",
+    },
+}
+
+
+def party_sentences(text: str, terms: tuple[str, ...]) -> list[str]:
+    sentences = re.split(r"(?<=[.!?])\\s+|\\n+", text)
+    return [sentence.strip() for sentence in sentences if any(re.search(r"\\b" + re.escape(term) + r"\\b", sentence, flags=re.I) for term in terms)][:2]
+
+
+def perspective_lens(row: pd.Series) -> dict[str, dict[str, str]]:
+    category, source = row["Provision category"], row["Relevant text"]
+    client_cues = party_sentences(source, ("customer", "client"))
+    provider_cues = party_sentences(source, ("supplier", "vendor", "service provider", "contractor", "company"))
+    output = {}
+    for label, cues in (("Client / Customer", client_cues), ("Service Provider / Company", provider_cues)):
+        source_cue = " ".join(cues)
+        if source_cue:
+            evidence = "Source cue: " + source_cue
+        else:
+            evidence = "No explicit " + ("Customer/Client" if label.startswith("Client") else "Service Provider/Company") + " reference was detected in this excerpt; this is a category-based review prompt, not an allocation finding."
+        focus = PERSPECTIVE_FOCUS.get(label, {}).get(category, "Check the operative obligation, exceptions, remedies, notice terms, and cost/risk allocation from this party's position.")
+        output[label] = {"evidence": evidence, "focus": focus}
+    return output
+
+
+def perspective_panels(row: pd.Series) -> str:
+    lenses = perspective_lens(row)
+    client, provider = lenses["Client / Customer"], lenses["Service Provider / Company"]
+    return f'''<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin:10px 0 12px">
+    <div style="background:#eaf3ff;border-left:5px solid #2463a6;border-radius:7px;padding:10px 12px"><b style="color:#174c83">CLIENT / CUSTOMER LENS</b><br><span style="font-size:0.92em"><b>Evidence:</b> {html.escape(client['evidence'])}</span><br><span style="font-size:0.92em"><b>Prima-facie review:</b> {html.escape(client['focus'])}</span></div>
+    <div style="background:#f3ecff;border-left:5px solid #7043a6;border-radius:7px;padding:10px 12px"><b style="color:#563182">SERVICE PROVIDER / COMPANY LENS</b><br><span style="font-size:0.92em"><b>Evidence:</b> {html.escape(provider['evidence'])}</span><br><span style="font-size:0.92em"><b>Prima-facie review:</b> {html.escape(provider['focus'])}</span></div></div>'''
+
 def review_card(row: pd.Series) -> str:
     colour = {"Critical": "#a43d3d", "High": "#c36a2d", "Moderate": "#b58a24", "Low": "#3e7d67"}[row["Risk level"]]
+    party_lenses = perspective_lens(row)
     excerpt = row["Evidence highlights"][:2200]
     return f'''<section style="background:#fff;border:1px solid #d9e1e7;border-left:8px solid {colour};border-radius:10px;padding:16px 18px;margin:12px 0;">
     <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;"><div><b>Clause {html.escape(str(row['Clause number']))} · {html.escape(row['Clause title'])}</b><br><span style="color:#536470">{html.escape(row['Provision category'])} · {html.escape(row['Parties affected'])}</span></div><b style="color:{colour}">{row['Risk level'].upper()} · {row['Risk score']}/5</b></div>
-    <p style="margin:12px 0 6px;color:{colour}"><b>Why this paint / priority:</b> {html.escape(row['Why this is priority'])}</p><p style="margin:8px 0 6px;color:#6d3f20"><b>Review focus:</b> {html.escape(row['Review focus / suggested improvement'])}</p><div style="background:#eef5f7;border-radius:6px;padding:10px 12px;line-height:1.55"><b>Drafting direction:</b> {html.escape(row['Drafting direction'])}</div>
+    <p style="margin:12px 0 6px;color:{colour}"><b>Why this paint / priority:</b> {html.escape(row['Why this is priority'])}</p>{perspective_panels(row)}<p style="margin:8px 0 6px;color:#6d3f20"><b>Review focus:</b> {html.escape(row['Review focus / suggested improvement'])}</p><div style="background:#eef5f7;border-radius:6px;padding:10px 12px;line-height:1.55"><b>Drafting direction:</b> {html.escape(row['Drafting direction'])}</div>
     <div style="background:#fff8e9;padding:10px 12px;border-radius:6px;line-height:1.6"><b>Evidence from the agreement:</b><br>{excerpt}</div>
     <style>mark{{background:#ffd166;color:#1c2730;font-weight:700;padding:1px 2px;border-radius:2px}}</style></section>'''
 
@@ -300,7 +353,7 @@ if uploaded:
         selected = st.multiselect("Filter provision categories", sorted(results["Provision category"].unique()), default=sorted(results["Provision category"].unique()))
         view = results[results["Provision category"].isin(selected)].sort_values(["Risk score", "Clause number"], ascending=[False, True])
         st.subheader("Priority evidence review")
-        st.caption("The paint explains urgency: red = highest potential financial/regulatory exposure, orange = material commercial allocation, amber = meaningful operating obligation, green = lower-priority allocation. Each card states why it received that paint and what drafting change to consider.")
+        st.caption("The paint explains urgency: red = highest potential financial/regulatory exposure, orange = material commercial allocation, amber = meaningful operating obligation, green = lower-priority allocation. Each card separates the Client/Customer and Service Provider/Company lenses, with source cues where party wording is present.")
         for _, row in view.iterrows(): st.markdown(review_card(row), unsafe_allow_html=True)
         gaps = client_coverage_gaps(results)
         st.subheader("Core agreement coverage gaps — suggested provisions to add")
