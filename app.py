@@ -130,6 +130,44 @@ def improvement_focus(category: str, text: str, triggers: list[str]) -> str:
     return focus + (" Screening signal: " + "; ".join(signals) + "." if signals else "")
 
 
+def priority_reason(category: str, level: str, triggers: list[str], text: str) -> str:
+    reasons = {
+        "Limitation of Liability": "the clause can determine the maximum financial exposure and whether important loss categories are recoverable",
+        "Indemnification": "the clause can shift third-party claim, defence, settlement, and reimbursement exposure",
+        "Data Protection": "the clause can allocate regulated personal-data obligations and incident exposure",
+        "Information Security": "the clause can set the security baseline and responsibility for a security incident",
+        "AI / Data Usage": "the clause can permit or restrict reuse of customer data for training, analytics, or service improvement",
+        "Intellectual Property": "the clause can allocate ownership and use rights in deliverables and pre-existing materials",
+        "Fees and Payment": "the clause can create material pricing, timing, tax, and collection consequences",
+        "Term and Termination": "the clause can control exit rights, cure opportunities, renewal, and transition obligations",
+        "SLA / Service Levels": "the clause can set measurable performance commitments and the remedy for failure",
+        "Confidentiality": "the clause can control protection and disclosure of commercially sensitive information",
+        "Dispute Resolution": "the clause can determine the path, forum, cost, and speed of enforcement",
+    }
+    paint = {"Critical": "red", "High": "orange", "Moderate": "amber", "Low": "green"}[level]
+    reason = reasons.get(category, "the clause allocates an express operational, legal, or commercial responsibility")
+    detail = f"{paint.title()} priority: {category} is rated {level.lower()} because {reason}."
+    if triggers:
+        detail += " The exact wording also contains escalation signal(s): " + ", ".join(triggers) + "."
+    return detail
+
+
+def drafting_direction(category: str) -> str:
+    directions = {
+        "Limitation of Liability": "Draft toward an explicit aggregate cap: identify the cap amount or fee-based formula, the claim period, the damages excluded, and any expressly negotiated carve-outs.",
+        "Indemnification": "Draft a closed list of covered third-party claims; state who controls defence, when settlement needs consent, and how this obligation interacts with the liability cap.",
+        "Data Protection": "Draft a data-processing schedule covering roles, instructions, subprocessors, international transfers, security, breach notice, assistance, and deletion/return of personal data.",
+        "Information Security": "Draft measurable baseline controls and incident language: security standard, notice deadline, investigation/remediation cooperation, and evidence/reporting obligations.",
+        "AI / Data Usage": "Draft an express permission boundary: prohibit training or service-improvement use of Customer Data unless prior written consent is given; include retention, deletion, confidentiality, and opt-out terms.",
+        "Intellectual Property": "Draft separate provisions for background IP and deliverables, then specify ownership/assignment or licence scope, permitted use, and any residual rights.",
+        "Fees and Payment": "Draft the commercial mechanics in one place: price, currency, tax, invoice prerequisites, payment date, dispute window, late charges, and change-control approval.",
+        "Term and Termination": "Draft clear trigger-and-consequence language: term, renewal, notice, cure period, termination rights, survival, handover, and payment on exit.",
+        "SLA / Service Levels": "Draft objective measurement and remedy language: metric, measurement window, exclusions, reporting, severity timetable, service credits, and escalation path.",
+        "Confidentiality": "Draft the protected-information definition, permitted disclosures, safeguards, exceptions, survival period, and return/destruction mechanism.",
+        "Dispute Resolution": "Draft a stepped process: business escalation, mediation/arbitration or court, governing forum, language, costs, and urgent-relief rights.",
+    }
+    return directions.get(category, "Draft the operative obligation, scope, exceptions, notice, remedy, and cost allocation explicitly rather than leaving them to implication.")
+
 def highlight_evidence(text: str, category: str, triggers: list[str]) -> str:
     escaped = html.escape(text)
     terms = list(CATEGORY_RULES.get(category, [])) + triggers
@@ -150,7 +188,9 @@ def analyze(text: str) -> pd.DataFrame:
                 "Related clauses": ", ".join(dict.fromkeys(refs)) or "None identified",
                 "Risk score": score, "Risk level": level,
                 "Evidence verified": clause["text"] in text,
+                "Why this is priority": priority_reason(category, level, triggers, clause["text"]),
                 "Review focus / suggested improvement": improvement_focus(category, clause["text"], triggers),
+                "Drafting direction": drafting_direction(category),
                 "Evidence highlights": highlight_evidence(clause["text"], category, triggers),
             })
     return pd.DataFrame(rows)
@@ -161,7 +201,7 @@ def review_card(row: pd.Series) -> str:
     excerpt = row["Evidence highlights"][:2200]
     return f'''<section style="background:#fff;border:1px solid #d9e1e7;border-left:8px solid {colour};border-radius:10px;padding:16px 18px;margin:12px 0;">
     <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;"><div><b>Clause {html.escape(str(row['Clause number']))} · {html.escape(row['Clause title'])}</b><br><span style="color:#536470">{html.escape(row['Provision category'])} · {html.escape(row['Parties affected'])}</span></div><b style="color:{colour}">{row['Risk level'].upper()} · {row['Risk score']}/5</b></div>
-    <p style="margin:12px 0 6px;color:#6d3f20"><b>Review focus / improvement:</b> {html.escape(row['Review focus / suggested improvement'])}</p>
+    <p style="margin:12px 0 6px;color:{colour}"><b>Why this paint / priority:</b> {html.escape(row['Why this is priority'])}</p><p style="margin:8px 0 6px;color:#6d3f20"><b>Review focus:</b> {html.escape(row['Review focus / suggested improvement'])}</p><div style="background:#eef5f7;border-radius:6px;padding:10px 12px;line-height:1.55"><b>Drafting direction:</b> {html.escape(row['Drafting direction'])}</div>
     <div style="background:#fff8e9;padding:10px 12px;border-radius:6px;line-height:1.6"><b>Evidence from the agreement:</b><br>{excerpt}</div>
     <style>mark{{background:#ffd166;color:#1c2730;font-weight:700;padding:1px 2px;border-radius:2px}}</style></section>'''
 
@@ -185,7 +225,7 @@ if uploaded:
         selected = st.multiselect("Filter provision categories", sorted(results["Provision category"].unique()), default=sorted(results["Provision category"].unique()))
         view = results[results["Provision category"].isin(selected)].sort_values(["Risk score", "Clause number"], ascending=[False, True])
         st.subheader("Priority evidence review")
-        st.caption("Each card links the detected clause number and title to exact source wording, an explicit risk signal, and a suggested negotiation/review action.")
+        st.caption("The paint explains urgency: red = highest potential financial/regulatory exposure, orange = material commercial allocation, amber = meaningful operating obligation, green = lower-priority allocation. Each card states why it received that paint and what drafting change to consider.")
         for _, row in view.iterrows(): st.markdown(review_card(row), unsafe_allow_html=True)
         st.subheader("Structured review table")
         st.dataframe(view.drop(columns=["Evidence highlights"]), use_container_width=True, hide_index=True, column_config={"Relevant text":st.column_config.TextColumn(width="large"),"Risk score":st.column_config.ProgressColumn(min_value=1,max_value=5,format="%d/5")})
