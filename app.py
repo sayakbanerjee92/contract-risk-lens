@@ -229,6 +229,48 @@ def coverage_gap_card(gap: dict) -> str:
     <p style="margin:8px 0"><b>Why consider adding it:</b> {html.escape(gap['reason'])}. This is a detection result, not proof that the agreement has no equivalent protection—confirm against the source.</p>
     <div style="background:#eef5f7;border-radius:6px;padding:10px 12px"><b>Client-side drafting direction:</b> {html.escape(gap['direction'])}</div></section>'''
 
+COUNTERPARTY_PROTECTIONS = [
+    ("Customer", "Data Protection", "Critical", "The Customer role is traced, but no data-protection provision was classified.", "From the Customer perspective, add processor instructions, breach timing, deletion/return, subprocessor controls, and remedies for non-compliance."),
+    ("Customer", "SLA / Service Levels", "High", "The Customer role is traced, but no service-level provision was classified.", "From the Customer perspective, add measurable performance standards, reporting, credits, escalation, and repeated-failure exit rights."),
+    ("Customer", "Audit Rights", "Moderate", "The Customer role is traced, but no audit-rights provision was classified.", "From the Customer perspective, add proportionate access to assurance reports, relevant records, and remediation evidence."),
+    ("Service Provider", "Scope of Services", "High", "The Service Provider role is traced, but no scope/acceptance provision was classified.", "From the Service Provider perspective, add a precise scope, customer dependencies, acceptance criteria, exclusions, and a written change-control process."),
+    ("Service Provider", "Fees and Payment", "High", "The Service Provider role is traced, but no payment provision was classified.", "From the Service Provider perspective, add clear price, invoice timing, payment due date, dispute process, suspension guardrails, and recovery of undisputed sums."),
+    ("Service Provider", "Limitation of Liability", "Critical", "The Service Provider role is traced, but no limitation-of-liability provision was classified.", "From the Service Provider perspective, add an aggregate liability cap, defined exclusions of remote loss, claim period, and proportionate carve-outs."),
+    ("Service Provider", "Intellectual Property", "High", "The Service Provider role is traced, but no IP allocation was classified.", "From the Service Provider perspective, reserve background tools and know-how, then define the client licence or deliverable ownership precisely."),
+    ("Both parties", "Confidentiality", "High", "Both-party obligations are traced, but no confidentiality provision was classified.", "For both parties, add a mutual confidentiality framework with permitted recipients, safeguards, exceptions, survival, and return/deletion duties."),
+    ("Both parties", "Dispute Resolution", "High", "Both-party obligations are traced, but no dispute-resolution provision was classified.", "For both parties, add an escalation path, chosen forum or arbitration procedure, governing law, costs, and urgent-relief rights."),
+]
+
+
+def traced_roles(results: pd.DataFrame) -> set[str]:
+    roles = set()
+    for value in results["Parties affected"].dropna():
+        for role in str(value).split(", "):
+            if role in {"Customer", "Service Provider", "Both parties"}:
+                roles.add(role)
+    if "Both parties" in roles:
+        roles.update({"Customer", "Service Provider"})
+    return roles
+
+
+def counterparty_coverage_gaps(results: pd.DataFrame) -> list[dict]:
+    roles = traced_roles(results)
+    detected = set(results["Provision category"].tolist())
+    gaps = []
+    for role, category, level, reason, direction in COUNTERPARTY_PROTECTIONS:
+        applicable = role in roles or (role == "Both parties" and {"Customer", "Service Provider"}.issubset(roles))
+        if applicable and category not in detected:
+            gaps.append({"role": role, "category": category, "level": level, "reason": reason, "direction": direction})
+    return gaps
+
+
+def counterparty_gap_card(gap: dict) -> str:
+    colour = {"Critical": "#a43d3d", "High": "#c36a2d", "Moderate": "#b58a24"}[gap["level"]]
+    return f'''<section style="background:#fff;border:1px solid #d9e1e7;border-left:8px solid {colour};border-radius:10px;padding:14px 16px;margin:10px 0;">
+    <b style="color:{colour}">{gap['level'].upper()} · {html.escape(gap['role'])} PERSPECTIVE · {html.escape(gap['category'])}</b>
+    <p style="margin:8px 0"><b>Why this counterparty needs it:</b> {html.escape(gap['reason'])}</p>
+    <div style="background:#eef5f7;border-radius:6px;padding:10px 12px"><b>Drafting direction for this role:</b> {html.escape(gap['direction'])}</div></section>'''
+
 def review_card(row: pd.Series) -> str:
     colour = {"Critical": "#a43d3d", "High": "#c36a2d", "Moderate": "#b58a24", "Low": "#3e7d67"}[row["Risk level"]]
     excerpt = row["Evidence highlights"][:2200]
@@ -261,12 +303,20 @@ if uploaded:
         st.caption("The paint explains urgency: red = highest potential financial/regulatory exposure, orange = material commercial allocation, amber = meaningful operating obligation, green = lower-priority allocation. Each card states why it received that paint and what drafting change to consider.")
         for _, row in view.iterrows(): st.markdown(review_card(row), unsafe_allow_html=True)
         gaps = client_coverage_gaps(results)
-        st.subheader("Client-side coverage gaps — suggested provisions to add")
+        st.subheader("Core agreement coverage gaps — suggested provisions to add")
         st.caption("These are agreement-specific suggestions: the app did not classify a clause in the uploaded text under the listed category. They are not findings that a legal protection is definitely absent.")
         if gaps:
             for gap in gaps: st.markdown(coverage_gap_card(gap), unsafe_allow_html=True)
         else:
             st.success("The app detected all core client-protection categories in this agreement. Verify clause adequacy and exceptions in the priority cards above.")
+        roles = traced_roles(results)
+        st.subheader("Counterparty-balanced coverage gaps")
+        st.caption("Roles traced in this agreement: " + (", ".join(sorted(roles)) if roles else "No role could be confidently traced") + ". These suggestions are role-specific and appear only where the related provision was not classified.")
+        role_gaps = counterparty_coverage_gaps(results)
+        if role_gaps:
+            for gap in role_gaps: st.markdown(counterparty_gap_card(gap), unsafe_allow_html=True)
+        else:
+            st.success("No role-specific gaps were identified for the counterparties traced by the app. Review the clause-level cards for adequacy and exceptions.")
         st.subheader("Structured review table")
         st.dataframe(view.drop(columns=["Evidence highlights"]), use_container_width=True, hide_index=True, column_config={"Relevant text":st.column_config.TextColumn(width="large"),"Risk score":st.column_config.ProgressColumn(min_value=1,max_value=5,format="%d/5")})
         st.download_button("Download evidence review as CSV", view.drop(columns=["Evidence highlights"]).to_csv(index=False).encode("utf-8"), "contract_evidence_review.csv", "text/csv")
