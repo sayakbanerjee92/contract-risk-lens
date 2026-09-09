@@ -316,6 +316,64 @@ def perspective_lens(row: pd.Series) -> dict[str, dict[str, str]]:
     return output
 
 
+ALLOCATION_SIGNAL_SPECS = [
+    ("Client / Customer obligation", "client-duty", r"\b(?:customer|client)\s+(?:shall|must|will|is required to|agrees to)\b"),
+    ("Client / Customer right", "client-right", r"\b(?:customer|client)\s+(?:may|has (?:the )?right to|is entitled to)\b"),
+    ("Service Provider / Company obligation", "provider-duty", r"\b(?:service provider|supplier|vendor|contractor|company)\s+(?:shall|must|will|is required to|agrees to)\b"),
+    ("Service Provider / Company right", "provider-right", r"\b(?:service provider|supplier|vendor|contractor|company)\s+(?:may|has (?:the )?right to|is entitled to)\b"),
+    ("Mutual obligation", "mutual-duty", r"\b(?:each party|either party|both parties)\s+(?:shall|must|will|agrees to)\b"),
+]
+
+
+def allocation_signals(text: str) -> list[dict[str, str]]:
+    signals, seen = [], set()
+    for label, css_class, pattern in ALLOCATION_SIGNAL_SPECS:
+        for match in re.finditer(pattern, text, flags=re.I):
+            cue = match.group(0)
+            key = (label, cue.lower())
+            if key not in seen:
+                signals.append({"label": label, "cue": cue, "class": css_class})
+                seen.add(key)
+    return signals
+
+
+def allocation_finding(text: str) -> dict[str, str]:
+    signals = allocation_signals(text)
+    labels = {item["label"] for item in signals}
+    client = any(label.startswith("Client") for label in labels)
+    provider = any(label.startswith("Service Provider") for label in labels)
+    mutual = "Mutual obligation" in labels
+    if client and provider:
+        finding = "Mixed allocation: the excerpt contains express Client/Customer and Service Provider/Company operative signals."
+    elif client:
+        finding = "Client/Customer-side allocation signal: the excerpt expressly places a duty or right on the Client/Customer; check whether the reciprocal provider protection is stated."
+    elif provider:
+        finding = "Service Provider/Company-side allocation signal: the excerpt expressly places a duty or right on the Service Provider/Company; check whether the reciprocal client protection is stated."
+    elif mutual:
+        finding = "Mutual allocation signal: the excerpt uses an express both-party obligation; verify whether the duties and remedies are genuinely reciprocal."
+    else:
+        finding = "Allocation unclear: no express party-plus-duty/right signal was detected in this excerpt. Do not treat this as proof of a missing obligation."
+    client_focus = "Client lens: " + ("confirm the provider's stated duty/right gives the Client an enforceable protection and remedy." if provider or mutual else "identify whether the Client is carrying a duty without an express counterbalancing provider obligation, right, or remedy.")
+    provider_focus = "Service Provider lens: " + ("confirm the Client's stated duty/right is bounded by dependencies, approvals, timing, and remedies." if client or mutual else "identify whether the Service Provider is carrying a duty without a defined cap, exclusion, dependency, or customer cooperation obligation.")
+    return {"finding": finding, "client_focus": client_focus, "provider_focus": provider_focus}
+
+
+def allocation_marked_text(text: str) -> str:
+    marked = html.escape(text)
+    for _, css_class, pattern in ALLOCATION_SIGNAL_SPECS:
+        marked = re.sub(pattern, lambda match: f'<span class="{css_class}">{match.group(0)}</span>', marked, flags=re.I)
+    return marked.replace("\n", "<br>")
+
+
+def allocation_graph_panel(row: pd.Series) -> str:
+    finding = allocation_finding(row["Relevant text"])
+    excerpt = allocation_marked_text(row["Relevant text"])[:2200]
+    return f'''<section style="margin:10px 0 12px;padding:12px;border:1px solid #cad6df;border-radius:8px;background:#f8fafc">
+    <b>Allocation finding graph</b><div style="display:flex;gap:7px;flex-wrap:wrap;margin:8px 0"><span style="padding:4px 7px;background:#fff3cf;border-radius:5px">1. Source wording</span><span>→</span><span style="padding:4px 7px;background:#e9edf2;border-radius:5px">2. Allocation finding</span><span>→</span><span style="padding:4px 7px;background:#eaf3ff;border-radius:5px">3. Client lens</span><span>→</span><span style="padding:4px 7px;background:#f3ecff;border-radius:5px">4. Provider lens</span></div>
+    <p style="margin:6px 0"><b>Finding:</b> {html.escape(finding['finding'])}</p><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:8px"><div style="background:#eaf3ff;padding:8px;border-radius:6px"><b>Client / Customer gap check</b><br>{html.escape(finding['client_focus'])}</div><div style="background:#f3ecff;padding:8px;border-radius:6px"><b>Service Provider / Company gap check</b><br>{html.escape(finding['provider_focus'])}</div></div>
+    <div style="margin-top:9px;background:#fff;padding:9px;border-radius:6px;line-height:1.6"><b>Allocation-marked source:</b><br>{excerpt}</div>
+    <style>.client-duty{background:#bddcff;color:#082f5f;font-weight:700;padding:1px 3px;border-radius:3px}.client-right{background:#8fc5ff;color:#082f5f;font-weight:700;padding:1px 3px;border-radius:3px}.provider-duty{background:#dec8ff;color:#3d176f;font-weight:700;padding:1px 3px;border-radius:3px}.provider-right{background:#c09bff;color:#3d176f;font-weight:700;padding:1px 3px;border-radius:3px}.mutual-duty{background:#d6eadb;color:#16482a;font-weight:700;padding:1px 3px;border-radius:3px}</style></section>'''
+
 def perspective_panels(row: pd.Series) -> str:
     lenses = perspective_lens(row)
     client, provider = lenses["Client / Customer"], lenses["Service Provider / Company"]
@@ -329,7 +387,7 @@ def review_card(row: pd.Series) -> str:
     excerpt = row["Evidence highlights"][:2200]
     return f'''<section style="background:#fff;border:1px solid #d9e1e7;border-left:8px solid {colour};border-radius:10px;padding:16px 18px;margin:12px 0;">
     <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;"><div><b>Clause {html.escape(str(row['Clause number']))} · {html.escape(row['Clause title'])}</b><br><span style="color:#536470">{html.escape(row['Provision category'])} · {html.escape(row['Parties affected'])}</span></div><b style="color:{colour}">{row['Risk level'].upper()} · {row['Risk score']}/5</b></div>
-    <p style="margin:12px 0 6px;color:{colour}"><b>Why this paint / priority:</b> {html.escape(row['Why this is priority'])}</p>{perspective_panels(row)}<p style="margin:8px 0 6px;color:#6d3f20"><b>Review focus:</b> {html.escape(row['Review focus / suggested improvement'])}</p><div style="background:#eef5f7;border-radius:6px;padding:10px 12px;line-height:1.55"><b>Drafting direction:</b> {html.escape(row['Drafting direction'])}</div>
+    <p style="margin:12px 0 6px;color:{colour}"><b>Why this paint / priority:</b> {html.escape(row['Why this is priority'])}</p>{allocation_graph_panel(row)}{perspective_panels(row)}<p style="margin:8px 0 6px;color:#6d3f20"><b>Review focus:</b> {html.escape(row['Review focus / suggested improvement'])}</p><div style="background:#eef5f7;border-radius:6px;padding:10px 12px;line-height:1.55"><b>Drafting direction:</b> {html.escape(row['Drafting direction'])}</div>
     <div style="background:#fff8e9;padding:10px 12px;border-radius:6px;line-height:1.6"><b>Evidence from the agreement:</b><br>{excerpt}</div>
     <style>mark{{background:#ffd166;color:#1c2730;font-weight:700;padding:1px 2px;border-radius:2px}}</style></section>'''
 
@@ -353,7 +411,7 @@ if uploaded:
         selected = st.multiselect("Filter provision categories", sorted(results["Provision category"].unique()), default=sorted(results["Provision category"].unique()))
         view = results[results["Provision category"].isin(selected)].sort_values(["Risk score", "Clause number"], ascending=[False, True])
         st.subheader("Priority evidence review")
-        st.caption("The paint explains urgency: red = highest potential financial/regulatory exposure, orange = material commercial allocation, amber = meaningful operating obligation, green = lower-priority allocation. Each card separates the Client/Customer and Service Provider/Company lenses, with source cues where party wording is present.")
+        st.caption("The paint explains urgency: red = highest potential financial/regulatory exposure, orange = material commercial allocation, amber = meaningful operating obligation, green = lower-priority allocation. Each card now follows a source → allocation finding → Client lens → Service Provider lens graph. Blue highlights mark Client/Customer duty/right wording, purple highlights mark Service Provider/Company wording, and green highlights mark express mutual duties.")
         for _, row in view.iterrows(): st.markdown(review_card(row), unsafe_allow_html=True)
         gaps = client_coverage_gaps(results)
         st.subheader("Core agreement coverage gaps — suggested provisions to add")
