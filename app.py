@@ -196,6 +196,39 @@ def analyze(text: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+CLIENT_PROTECTIONS = [
+    ("Scope of Services", "High", "No scope / delivery clause was classified", "Add a statement-of-work, acceptance, dependency, change-control, and remedy framework so the client can measure and enforce delivery."),
+    ("Fees and Payment", "High", "No fees and payment clause was classified", "Add fixed or clearly governed pricing, invoicing prerequisites, a dispute mechanism, withholding rights for disputed amounts, and approval for change charges."),
+    ("Intellectual Property", "Critical", "No intellectual-property clause was classified", "Add ownership or licence language for deliverables, assignment mechanics where needed, background-IP treatment, and a warranty that the client can use the deliverables without infringement."),
+    ("Confidentiality", "High", "No confidentiality clause was classified", "Add mutual confidentiality obligations, permitted-recipient controls, security safeguards, return/deletion rights, and survival after termination."),
+    ("Data Protection", "Critical", "No data-protection clause was classified", "Add a data-processing schedule: roles, instructions, subprocessors, transfers, breach notice, assistance, and deletion/return obligations."),
+    ("Information Security", "Critical", "No information-security clause was classified", "Add measurable security standards, incident notice and remediation duties, audit evidence, and responsibility for security failures."),
+    ("Indemnification", "Critical", "No indemnification clause was classified", "Add client-favourable third-party IP infringement and data/security claim indemnities, together with defence-control and settlement-consent protections."),
+    ("Limitation of Liability", "Critical", "No limitation-of-liability clause was classified", "Add a negotiated liability cap, clear carve-outs for the most serious risks, and an exclusion of remote or indirect losses appropriate to the transaction."),
+    ("SLA / Service Levels", "High", "No service-level clause was classified", "Add objective service levels, reporting, response/restoration targets, service credits, escalation, and repeated-failure termination rights."),
+    ("Audit Rights", "Moderate", "No audit-rights clause was classified", "Add proportionate rights to obtain compliance evidence and audit relevant records, security controls, and subcontractor performance."),
+    ("Subcontracting", "High", "No subcontracting clause was classified", "Require prior notice or consent for material subcontractors, flow-down of obligations, and continuing supplier responsibility for subcontractor acts and omissions."),
+    ("Term and Termination", "High", "No term and termination clause was classified", "Add defined term and renewal mechanics, breach cure periods, client termination rights, transition assistance, data return, and survival provisions."),
+    ("AI / Data Usage", "Critical", "No AI/data-usage clause was classified", "Add an express restriction on using client data for model training or service improvement without prior written consent, plus retention, deletion, and confidentiality controls."),
+]
+
+
+def client_coverage_gaps(results: pd.DataFrame) -> list[dict]:
+    detected = set(results["Provision category"].tolist())
+    gaps = []
+    for category, level, reason, direction in CLIENT_PROTECTIONS:
+        if category not in detected:
+            gaps.append({"category": category, "level": level, "reason": reason, "direction": direction})
+    return gaps
+
+
+def coverage_gap_card(gap: dict) -> str:
+    colour = {"Critical": "#a43d3d", "High": "#c36a2d", "Moderate": "#b58a24"}[gap["level"]]
+    return f'''<section style="background:#fff;border:1px solid #d9e1e7;border-left:8px solid {colour};border-radius:10px;padding:14px 16px;margin:10px 0;">
+    <b style="color:{colour}">{gap['level'].upper()} CLIENT PROTECTION GAP · {html.escape(gap['category'])}</b>
+    <p style="margin:8px 0"><b>Why consider adding it:</b> {html.escape(gap['reason'])}. This is a detection result, not proof that the agreement has no equivalent protection—confirm against the source.</p>
+    <div style="background:#eef5f7;border-radius:6px;padding:10px 12px"><b>Client-side drafting direction:</b> {html.escape(gap['direction'])}</div></section>'''
+
 def review_card(row: pd.Series) -> str:
     colour = {"Critical": "#a43d3d", "High": "#c36a2d", "Moderate": "#b58a24", "Low": "#3e7d67"}[row["Risk level"]]
     excerpt = row["Evidence highlights"][:2200]
@@ -227,6 +260,13 @@ if uploaded:
         st.subheader("Priority evidence review")
         st.caption("The paint explains urgency: red = highest potential financial/regulatory exposure, orange = material commercial allocation, amber = meaningful operating obligation, green = lower-priority allocation. Each card states why it received that paint and what drafting change to consider.")
         for _, row in view.iterrows(): st.markdown(review_card(row), unsafe_allow_html=True)
+        gaps = client_coverage_gaps(results)
+        st.subheader("Client-side coverage gaps — suggested provisions to add")
+        st.caption("These are agreement-specific suggestions: the app did not classify a clause in the uploaded text under the listed category. They are not findings that a legal protection is definitely absent.")
+        if gaps:
+            for gap in gaps: st.markdown(coverage_gap_card(gap), unsafe_allow_html=True)
+        else:
+            st.success("The app detected all core client-protection categories in this agreement. Verify clause adequacy and exceptions in the priority cards above.")
         st.subheader("Structured review table")
         st.dataframe(view.drop(columns=["Evidence highlights"]), use_container_width=True, hide_index=True, column_config={"Relevant text":st.column_config.TextColumn(width="large"),"Risk score":st.column_config.ProgressColumn(min_value=1,max_value=5,format="%d/5")})
         st.download_button("Download evidence review as CSV", view.drop(columns=["Evidence highlights"]).to_csv(index=False).encode("utf-8"), "contract_evidence_review.csv", "text/csv")
